@@ -711,6 +711,64 @@ def load_xrd_hdf5(hdf5_path):
     return data
 
 
+def load_pl_hdf5(hdf5_path):
+    """
+    Load a PL nanowire HDF5 file exported by Analysis.exportpython in MATLAB.
+
+    Returns a list of SimpleNamespace objects, one per nanowire, with:
+      - Numeric arrays as ndarray attributes
+      - String properties as string attributes
+      - Cell arrays (PeakPos, PeakArea, FWHM, ...) as lists of lists,
+        where cell[row][col] corresponds to MATLAB's cell{row+1, col+1}
+
+    Parameters
+    ----------
+    hdf5_path : str — path to the .h5 file
+
+    Returns
+    -------
+    nwarray : list of SimpleNamespace
+    """
+    import h5py
+    from types import SimpleNamespace
+
+    nwarray = []
+    with h5py.File(hdf5_path, 'r') as f:
+        nw_keys = sorted(
+            [k for k in f.keys() if k.startswith('nw_')],
+            key=lambda k: int(k.split('_')[1])
+        )
+        for key in nw_keys:
+            grp = f[key]
+            d = {}
+
+            for attr_name, attr_val in grp.attrs.items():
+                d[attr_name] = str(attr_val)
+
+            for item_name in grp.keys():
+                if item_name.startswith('_'):
+                    continue
+                item = grp[item_name]
+                if isinstance(item, h5py.Dataset):
+                    d[item_name] = item[:]
+                elif isinstance(item, h5py.Group):
+                    entries = {}
+                    max_r, max_c = 0, 0
+                    for k in item.keys():
+                        r, c = map(int, k.split('_'))
+                        entries[(r, c)] = item[k][:]
+                        max_r = max(max_r, r)
+                        max_c = max(max_c, c)
+                    d[item_name] = [
+                        [entries.get((r, c), None) for c in range(1, max_c + 1)]
+                        for r in range(1, max_r + 1)
+                    ]
+
+            nwarray.append(SimpleNamespace(**d))
+
+    return nwarray
+
+
 def moving_average(n, y, x):
     """
     Apply a moving average of window size n to y, with x centered accordingly.
