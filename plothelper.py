@@ -137,15 +137,19 @@ def _nice_scalebar_length(img_width_px, pixel_size_m, unit, length=None):
  
  
 def _draw_scalebar(ax, arr, pixel_size_m, unit,
-                   color, fontsize, loc, length=None, fullwidth=True):
+                   color, fontsize, loc, length=None, fullwidth=True,
+                   img_width_px=None):
     """
     Draw a scalebar rectangle + label using axes-fraction coordinates.
-    loc      : "lower right" | "lower left" | "upper right" | "upper left"
-               | "below left" | "below center" | "below right"
-    fullwidth: if True (default), the black box spans the full axes width and
-               the bar/label are centered; if False, a small corner box is used.
+    loc           : "lower right" | "lower left" | "upper right" | "upper left"
+                    | "below left" | "below center" | "below right"
+    fullwidth     : if True (default), the black box spans the full axes width and
+                    the bar/label are centered; if False, a small corner box is used.
+    img_width_px  : visible image width in pixels (default: arr.shape[1]). Pass the
+                    viewport width when fit_to_image=False to get correct bar scaling.
     """
-    img_width_px = arr.shape[1]
+    if img_width_px is None:
+        img_width_px = arr.shape[1]
     length_px, length_val, unit_label = _nice_scalebar_length(
         img_width_px, pixel_size_m, unit, length
     )
@@ -247,6 +251,7 @@ def _draw_scalebar(ax, arr, pixel_size_m, unit,
  
 def plot_sem(ax, path, cmap="gray", origin="upper", normalize=False,
             cropx=None, cropy=None,
+            rotation=0, fit_to_image=True, magnification=1, shift_x=0, shift_y=0,
             scalebar=False, unit=None,
             scalebar_color="white", scalebar_fontsize=10,
             scalebar_loc="lower right", scalebar_length=None,
@@ -274,6 +279,20 @@ def plot_sem(ax, path, cmap="gray", origin="upper", normalize=False,
                                            If None, auto-sized to ~15 % of width.
     pixel_size       : float or None     — physical size of one pixel in metres.
                                            If None, read from TIFF metadata.
+    rotation         : float             — clockwise rotation in degrees (default: 0).
+                                           Rotated corners are transparent.
+    fit_to_image     : bool              — if True (default), the displayed region covers
+                                           the full rotated bounding box. If False, the
+                                           viewport is clipped to the pre-rotation image
+                                           dimensions (centered), so the axes size set via
+                                           make_axes remains valid.
+    magnification    : float             — zoom factor applied when fit_to_image=False
+                                           (default: 1). magnification=2 shows half the
+                                           original pixel dimensions, zooming in 2×.
+    shift_x          : float             — horizontal shift of the viewport in pixels,
+                                           applied when fit_to_image=False (default: 0).
+    shift_y          : float             — vertical shift of the viewport in pixels,
+                                           applied when fit_to_image=False (default: 0).
     frame_color      : str or None       — draw a frame around the image in this color.
                                            If None, no frame is drawn (default).
     frame_linewidth  : float             — linewidth of the frame (default: 2).
@@ -289,18 +308,46 @@ def plot_sem(ax, path, cmap="gray", origin="upper", normalize=False,
         arr = arr[cropy[0]:cropy[1], :]
     if cropx is not None:
         arr = arr[:, cropx[0]:cropx[1]]
- 
+
+    rotation_mask = None
+    orig_h, orig_w = arr.shape[:2]
+    if rotation != 0:
+        from scipy.ndimage import rotate as _rotate
+        _mask = np.ones(arr.shape[:2], dtype=float)
+        rotation_mask = _rotate(_mask, -rotation, reshape=True, order=0, cval=0)
+        arr = _rotate(arr, -rotation, reshape=True, order=1, cval=0)
+
     if normalize:
         arr = arr.astype(float)
         arr = (arr - arr.min()) / (arr.max() - arr.min())
- 
+
     im = ax.imshow(arr, cmap=cmap, origin=origin)
-    ax.set_aspect('auto')
-    ax.set_xlim(-0.5, arr.shape[1] - 0.5)
-    if origin == "upper":
-        ax.set_ylim(arr.shape[0] - 0.5, -0.5)
+    if rotation_mask is not None:
+        im.set_alpha(rotation_mask)
+        ax.set_facecolor('none')
+    ax.set_aspect('equal' if fit_to_image else 'auto')
+
+    view_w = None
+    if not fit_to_image:
+        fig = ax.get_figure()
+        pos = ax.get_position()
+        ax_w_in = fig.get_figwidth()  * pos.width
+        ax_h_in = fig.get_figheight() * pos.height
+        cx = arr.shape[1] / 2 + shift_x
+        cy = arr.shape[0] / 2 + shift_y
+        view_h = orig_h / magnification
+        view_w = view_h * (ax_w_in / ax_h_in)
+        ax.set_xlim(cx - view_w / 2 - 0.5, cx + view_w / 2 - 0.5)
+        if origin == "upper":
+            ax.set_ylim(cy + view_h / 2 - 0.5, cy - view_h / 2 - 0.5)
+        else:
+            ax.set_ylim(cy - view_h / 2 - 0.5, cy + view_h / 2 - 0.5)
     else:
-        ax.set_ylim(-0.5, arr.shape[0] - 0.5)
+        ax.set_xlim(-0.5, arr.shape[1] - 0.5)
+        if origin == "upper":
+            ax.set_ylim(arr.shape[0] - 0.5, -0.5)
+        else:
+            ax.set_ylim(-0.5, arr.shape[0] - 0.5)
     ax.set_xticks([])
     ax.set_yticks([])
     for spine in ax.spines.values():
@@ -324,9 +371,9 @@ def plot_sem(ax, path, cmap="gray", origin="upper", normalize=False,
             )
         _draw_scalebar(ax, arr, px_size, unit,
                        scalebar_color, scalebar_fontsize, scalebar_loc,
-                       scalebar_length, scalebar_fullwidth)
+                       scalebar_length, scalebar_fullwidth,
+                       img_width_px=view_w)
 
-    ax.set_aspect('auto')
     return im
 
 
