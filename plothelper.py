@@ -851,6 +851,14 @@ def moving_average(n, y, x):
     return x_avg, y_avg
 
 
+def find_closest(array, value):
+    return int(np.argmin(np.abs(np.asarray(array) - value)))
+
+
+def pump_fluence(P, f, dspot):
+    return 4 * P / f / np.pi / dspot**2 * 0.1
+
+
 if __name__ == "__main__":
     import argparse
 
