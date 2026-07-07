@@ -397,6 +397,7 @@ def plot_growth(ax, steps, times, width_factors, temperatures,
                 ratios=None,
                 colors=None, colors_text=None,
                 label_fontsize=14,
+                step_label_fontsize=None, ratio_fontsize=None,
                 ylim_lower=None, ylim_upper=None):
     """
     Plot a growth sequence diagram on a matplotlib Axes object.
@@ -414,6 +415,11 @@ def plot_growth(ax, steps, times, width_factors, temperatures,
     colors        : dict or None    — override fill colours keyed by step name
     colors_text   : dict or None    — override text colours keyed by step name
     label_fontsize: int             — max fontsize for in-plot labels; auto-reduced to fit (default: 14)
+    step_label_fontsize: int or None — fontsize for material-name and growth-time labels
+                                      (always equal for both); overrides the auto-fit size
+                                      derived from label_fontsize (default: None)
+    ratio_fontsize: int or None     — fontsize for V-III ratio labels; overrides the auto-fit
+                                      size derived from label_fontsize (default: None)
     ylim_lower    : float or None   — lower y-limit; auto = min(T) - 20
     ylim_upper    : float or None   — upper y-limit; auto = max(T) + 10
     """
@@ -487,8 +493,6 @@ def plot_growth(ax, steps, times, width_factors, temperatures,
     ax.tick_params(which="minor", right=False, direction="out", left=False)
 
     # Step labels (material name + time) — uniform fontsize, sized to the narrowest bar
-    text_y_step = y_lo + y_range * 0.08
-    text_y_name = y_lo + y_range * 0.04
     step_fs = label_fontsize
     for i in range(nsteps):
         if steps[i] != "ramp":
@@ -496,6 +500,14 @@ def plot_growth(ax, steps, times, width_factors, temperatures,
             x1 = cum_scaled_times[i + 1]
             time_str = f"{int(times[i])}min"
             step_fs = min(step_fs, _fit_fontsize(ax, x0, x1, [steps[i], time_str], max_fs=label_fontsize))
+
+    fs = step_label_fontsize if step_label_fontsize is not None else step_fs
+    # Vertical gap between the name and time lines, scaled to the fontsize
+    # so the two lines stop overlapping at larger sizes.
+    line_gap_in = (fs / 72) * 1.1
+    text_y_name = y_lo + y_range * 0.06
+    text_y_step = text_y_name + line_gap_in * y_scale
+
     for i in range(nsteps):
         if steps[i] != "ramp":
             x0 = cum_scaled_times[i]
@@ -504,13 +516,13 @@ def plot_growth(ax, steps, times, width_factors, temperatures,
             tc = _colors_text.get(steps[i], "black")
             x_text = x0 + (x1 - x0) * 0.04
             ax.text(x_text, text_y_step, time_str,
-                    color=tc, fontsize=step_fs, fontweight="bold")
+                    color=tc, fontsize=fs, fontweight="bold")
             ax.text(x_text, text_y_name, steps[i],
-                    color=tc, fontsize=step_fs, fontweight="bold")
+                    color=tc, fontsize=fs, fontweight="bold")
 
     # V-III ratio labels — above the bars, autoscaled to the bar's width
     if ratios is not None:
-        ratio_y_offset = y_range * 0.02
+        ratio_y_offset = y_range * 0.05
         for i, r in enumerate(ratios):
             if r and i < nsteps:
                 x0 = cum_scaled_times[i]
@@ -519,7 +531,9 @@ def plot_growth(ax, steps, times, width_factors, temperatures,
                 bar_top = max(temperatures[i], temperatures[i + 1])
                 x_text = x0 + (x1 - x0) * 0.04
                 ax.text(x_text, bar_top + ratio_y_offset, label,
-                        color="black", fontsize=step_fs, fontweight="bold")
+                        color="black",
+                        fontsize=ratio_fontsize if ratio_fontsize is not None else step_fs,
+                        fontweight="bold")
 
 
 def make_axes(fig, specs, low, top, heights, dys, lefts, rights,
