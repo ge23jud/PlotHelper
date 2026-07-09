@@ -251,8 +251,8 @@ def _draw_scalebar(ax, arr, pixel_size_m, unit,
         fontsize=fontsize, color=color,
         fontweight="bold", zorder=5,
     )
- 
- 
+
+
 def _draw_top_label(ax, text, color, fontsize, pad_extra=0.0):
     """
     Draw a text label inside a black box anchored to the top edge of the axes,
@@ -302,7 +302,7 @@ def plot_sem(ax, path, cmap="gray", origin="upper", normalize=False,
             scalebar_loc="lower right", scalebar_length=None,
             scalebar_fullwidth=True, scalebar_pad_size=0.0,
             label_pad=None, label_pad_size=0.0,
-            pixel_size=None, frame_color=None, frame_linewidth=2):
+            pixel_size=None, frame_color=None, frame_linewidth=2, frame_sides=None):
     """
     Plot a SEM .tif image on a given matplotlib Axes object.
  
@@ -317,7 +317,8 @@ def plot_sem(ax, path, cmap="gray", origin="upper", normalize=False,
     cropy            : tuple (y0, y1)   — pixel range to keep in y (rows)
     scalebar         : bool              — draw a scalebar (default: False)
     unit             : str               — display unit: "nm","µm","mm","cm","m"
-    scalebar_color   : str               — bar + text color (default: "white")
+    scalebar_color   : str               — color of the scalebar, its text label, and
+                                           the label_pad top label (default: "white")
     scalebar_fontsize: int               — label fontsize (default: 10)
     scalebar_loc     : str               — "lower right" | "lower left" |
                                            "upper right" | "upper left"
@@ -352,6 +353,9 @@ def plot_sem(ax, path, cmap="gray", origin="upper", normalize=False,
     frame_color      : str or None       — draw a frame around the image in this color.
                                            If None, no frame is drawn (default).
     frame_linewidth  : float             — linewidth of the frame (default: 2).
+    frame_sides      : list of str or None — which sides to draw, any of "left", "right",
+                                           "top", "bottom". If None, all four sides are
+                                           drawn (default: None).
  
     Returns
     -------
@@ -410,13 +414,18 @@ def plot_sem(ax, path, cmap="gray", origin="upper", normalize=False,
         spine.set_visible(False)
 
     if frame_color is not None:
-        ax.add_patch(mpatches.FancyBboxPatch(
-            (0, 0), 1, 1,
-            boxstyle="square,pad=0",
-            transform=ax.transAxes,
-            fill=False, edgecolor=frame_color, linewidth=frame_linewidth,
-            zorder=10, clip_on=False,
-        ))
+        sides = frame_sides if frame_sides is not None else ["left", "right", "top", "bottom"]
+        side_coords = {
+            "left":   ([0, 0], [0, 1]),
+            "right":  ([1, 1], [0, 1]),
+            "top":    ([0, 1], [1, 1]),
+            "bottom": ([0, 1], [0, 0]),
+        }
+        for side in sides:
+            x, y = side_coords[side]
+            ax.plot(x, y, transform=ax.transAxes, color=frame_color,
+                    linewidth=frame_linewidth, zorder=10, clip_on=False,
+                    solid_capstyle="projecting")
  
     if scalebar:
         px_size = pixel_size if pixel_size is not None else _read_pixel_size(img)
@@ -536,27 +545,19 @@ def plot_growth(ax, steps, times, width_factors, temperatures,
         ax.spines[pos].set_visible(False)
 
     y_range = y_hi - y_lo
-    # Compute arrowhead size in inches then convert to data units per axis,
-    # so both arrowheads appear the same physical size regardless of axis scales.
     fig = ax.figure
     ax_pos = ax.get_position()
-    ax_w_in = fig.get_figwidth() * ax_pos.width
     ax_h_in = fig.get_figheight() * ax_pos.height
-    x_scale = (ax.get_xlim()[1] - ax.get_xlim()[0]) / ax_w_in  # data units per inch, x
-    y_scale = y_range / ax_h_in                                  # data units per inch, y
-    head_w_in = min(ax_w_in, ax_h_in) * 0.02   # arrowhead width in inches
-    head_l_in = head_w_in * 0.75               # arrowhead length in inches
-    hw_x = head_w_in * y_scale   # x-arrow: head_width is in y data units
-    hl_x = head_l_in * x_scale   # x-arrow: head_length is in x data units
-    hw_y = head_w_in * x_scale   # y-arrow: head_width is in x data units
-    hl_y = head_l_in * y_scale   # y-arrow: head_length is in y data units
+    y_scale = y_range / ax_h_in  # data units per inch, y
 
-    ax.arrow(0, y_lo + 1, x_end * 1.05, 0,
-             length_includes_head=True, color="black",
-             head_width=hw_x, head_length=hl_x, zorder=10)
-    ax.arrow(0, 0, 0, y_hi,
-             length_includes_head=True, color="black",
-             head_width=hw_y, head_length=hl_y, zorder=10)
+    axis_linewidth = ax.spines["left"].get_linewidth()  # points
+    axis_lw_y = (axis_linewidth / 72) * y_scale  # points -> inches -> data units, y
+    y_axis0 = y_lo + axis_lw_y  # shifted up so the full stroke is inside the y-limits
+
+    ax.plot([0, x_end * 1.05], [y_axis0, y_axis0], color="black",
+            linewidth=axis_linewidth, zorder=10)
+    ax.plot([0, 0], [y_axis0, y_hi], color="black",
+            linewidth=axis_linewidth, zorder=10)
 
     if box_colors is not None and len(box_colors) != nsteps:
         raise ValueError(
@@ -567,14 +568,14 @@ def plot_growth(ax, steps, times, width_factors, temperatures,
         ax.fill_between(
             [cum_scaled_times[i], cum_scaled_times[i + 1]],
             [temperatures[i], temperatures[i + 1]],
-            [y_lo + 1, y_lo + 1],
+            [y_axis0, y_axis0],
             color=box_colors[i] if box_colors is not None else _colors.get(steps[i], "#cccccc"),
         )
 
     ax.tick_params(which="major", right=False, direction="out", left=True, color="black")
     ax.tick_params(which="minor", right=False, direction="out", left=False)
 
-    # Step labels (material name + time) — uniform fontsize, sized to the narrowest bar
+    # Growth-time labels — uniform fontsize, sized to the narrowest bar
     non_ramp_idx = [i for i in range(nsteps) if steps[i] != "ramp"]
     if times_labels is not None:
         if len(times_labels) != len(non_ramp_idx):
@@ -592,14 +593,10 @@ def plot_growth(ax, steps, times, width_factors, temperatures,
             x0 = cum_scaled_times[i]
             x1 = cum_scaled_times[i + 1]
             time_str = time_strs[i]
-            step_fs = min(step_fs, _fit_fontsize(ax, x0, x1, [steps[i], time_str], max_fs=label_fontsize))
+            step_fs = min(step_fs, _fit_fontsize(ax, x0, x1, [time_str], max_fs=label_fontsize))
 
     fs = step_label_fontsize if step_label_fontsize is not None else step_fs
-    # Vertical gap between the name and time lines, scaled to the fontsize
-    # so the two lines stop overlapping at larger sizes.
-    line_gap_in = (fs / 72) * 1.1
-    text_y_name = y_lo + y_range * 0.06
-    text_y_step = text_y_name + line_gap_in * y_scale
+    text_y_step = y_lo + y_range * 0.06
 
     for i in range(nsteps):
         if steps[i] != "ramp":
@@ -607,11 +604,17 @@ def plot_growth(ax, steps, times, width_factors, temperatures,
             x1 = cum_scaled_times[i + 1]
             time_str = time_strs[i]
             tc = _colors_text.get(steps[i], "black")
-            x_text = x0 + (x1 - x0) * 0.04
-            ax.text(x_text, text_y_step, time_str,
+            x_text = x0 + (x1 - x0) * 0.5
+            ax.text(x_text, text_y_step, time_str, ha="center",
                     color=tc, fontsize=fs, fontweight="bold")
-            ax.text(x_text, text_y_name, steps[i],
-                    color=tc, fontsize=fs, fontweight="bold")
+
+    # Legend mapping colors to material names, in the top right corner
+    legend_names = [s for s in dict.fromkeys(steps) if s != "ramp"]
+    legend_handles = [
+        mpatches.Patch(facecolor=_colors.get(name, "#cccccc"), edgecolor="none", label=name)
+        for name in legend_names
+    ]
+    ax.legend(handles=legend_handles, loc="upper right", frameon=False, fontsize=fs)
 
     # Custom step labels — above the colored boxes, same color as the material labels
     if step_labels is not None:
@@ -627,9 +630,9 @@ def plot_growth(ax, steps, times, width_factors, temperatures,
             x0 = cum_scaled_times[i]
             x1 = cum_scaled_times[i + 1]
             bar_top = max(temperatures[i], temperatures[i + 1])
-            x_text = x0 + (x1 - x0) * 0.04
+            x_text = x0 + (x1 - x0) * 0.5
             color = _step_label_colors.get(steps[i], _colors_text.get(steps[i], "black"))
-            ax.text(x_text, bar_top + step_label_y_offset, step_label_map[i],
+            ax.text(x_text, bar_top + step_label_y_offset, step_label_map[i], ha="center",
                     color=color, fontsize=fs, fontweight="bold")
 
     # V-III ratio labels — above the bars, autoscaled to the bar's width
@@ -641,12 +644,12 @@ def plot_growth(ax, steps, times, width_factors, temperatures,
                 x1 = cum_scaled_times[i + 1]
                 label = f"$\\mathbf{{R_{{V/III}}}}$={r}"
                 bar_top = max(temperatures[i], temperatures[i + 1])
-                x_text = x0 + (x1 - x0) * 0.04
+                x_text = x0 + (x1 - x0) * 0.5
                 if ratios_inside:
                     y_ratio, va = bar_top - ratio_y_offset, "top"
                 else:
                     y_ratio, va = bar_top + ratio_y_offset, "baseline"
-                ax.text(x_text, y_ratio, label, va=va,
+                ax.text(x_text, y_ratio, label, va=va, ha="center",
                         color=_colors_text.get(steps[i], "black"),
                         fontsize=ratio_fontsize if ratio_fontsize is not None else step_fs,
                         fontweight="bold")
