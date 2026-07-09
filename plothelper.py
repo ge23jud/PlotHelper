@@ -138,7 +138,7 @@ def _nice_scalebar_length(img_width_px, pixel_size_m, unit, length=None):
  
 def _draw_scalebar(ax, arr, pixel_size_m, unit,
                    color, fontsize, loc, length=None, fullwidth=True,
-                   img_width_px=None):
+                   img_width_px=None, pad_extra=0.0):
     """
     Draw a scalebar rectangle + label using axes-fraction coordinates.
     loc           : "lower right" | "lower left" | "upper right" | "upper left"
@@ -147,6 +147,8 @@ def _draw_scalebar(ax, arr, pixel_size_m, unit,
                     the bar/label are centered; if False, a small corner box is used.
     img_width_px  : visible image width in pixels (default: arr.shape[1]). Pass the
                     viewport width when fit_to_image=False to get correct bar scaling.
+    pad_extra     : additional axes-fraction padding added above the label, growing
+                    the box upward while its bottom edge stays fixed (default: 0).
     """
     if img_width_px is None:
         img_width_px = arr.shape[1]
@@ -186,10 +188,11 @@ def _draw_scalebar(ax, arr, pixel_size_m, unit,
         else:
             x_center = 0.5
 
-        box_h  = pad + bar_h + gap + text_h + pad
+        content_h = bar_h + gap + text_h
+        box_h  = 2 * pad + content_h + pad_extra
         box_y0 = -box_h
         x_bar  = x_center - bar_frac / 2
-        y_bar  = box_y0 + pad
+        y_bar  = box_y0 + (box_h - content_h) / 2
         y_text = y_bar + bar_h + gap
 
         ax.add_patch(mpatches.FancyBboxPatch(
@@ -212,7 +215,8 @@ def _draw_scalebar(ax, arr, pixel_size_m, unit,
         return
 
     # ── within-image layout ───────────────────────────────────────────────────
-    box_h = bar_h + gap + text_h + 2 * pad
+    content_h = bar_h + gap + text_h
+    box_h = 2 * pad + content_h + pad_extra
 
     if fullwidth:
         box_x0   = 0
@@ -227,7 +231,7 @@ def _draw_scalebar(ax, arr, pixel_size_m, unit,
         x_center = box_x0 + box_w / 2
 
     x_bar  = x_center - bar_frac / 2
-    y_bar  = box_y0 + pad
+    y_bar  = box_y0 + (box_h - content_h) / 2
     y_text = y_bar + bar_h + gap
 
     ax.add_patch(mpatches.FancyBboxPatch(
@@ -249,13 +253,55 @@ def _draw_scalebar(ax, arr, pixel_size_m, unit,
     )
  
  
+def _draw_top_label(ax, text, color, fontsize, pad_extra=0.0):
+    """
+    Draw a text label inside a black box anchored to the top edge of the axes,
+    styled like the within-image scalebar box.
+    pad_extra : additional axes-fraction padding that grows the box downward
+                while its top edge stays fixed (default: 0).
+    """
+    pad = 0.012
+    fig = ax.get_figure()
+
+    tmp = ax.text(0.5, 0.5, text, transform=ax.transAxes,
+                  ha="center", va="bottom", fontsize=fontsize, fontweight="bold")
+    fig.canvas.draw()
+    try:
+        renderer = fig.canvas.get_renderer()
+    except AttributeError:
+        renderer = fig.canvas.renderer
+
+    bb     = tmp.get_window_extent(renderer=renderer)
+    ax_bb  = ax.get_window_extent(renderer=renderer)
+    text_h = bb.height / ax_bb.height
+    tmp.remove()
+
+    box_h  = text_h + 2 * pad + pad_extra
+    box_y0 = 1 - box_h
+    y_text = box_y0 + (box_h - text_h) / 2
+
+    ax.add_patch(mpatches.FancyBboxPatch(
+        (0, box_y0), 1, box_h,
+        boxstyle="square,pad=0", transform=ax.transAxes,
+        facecolor="black", edgecolor="none", zorder=4, clip_on=False,
+    ))
+    ax.text(
+        0.5, y_text, text,
+        transform=ax.transAxes,
+        ha="center", va="bottom",
+        fontsize=fontsize, color=color,
+        fontweight="bold", zorder=5,
+    )
+
+
 def plot_sem(ax, path, cmap="gray", origin="upper", normalize=False,
             cropx=None, cropy=None,
             rotation=0, fit_to_image=True, magnification=1, shift_x=0, shift_y=0,
             scalebar=False, unit=None,
             scalebar_color="white", scalebar_fontsize=10,
             scalebar_loc="lower right", scalebar_length=None,
-            scalebar_fullwidth=True,
+            scalebar_fullwidth=True, scalebar_pad_size=0.0,
+            label_pad=None, label_pad_size=0.0,
             pixel_size=None, frame_color=None, frame_linewidth=2):
     """
     Plot a SEM .tif image on a given matplotlib Axes object.
@@ -277,6 +323,16 @@ def plot_sem(ax, path, cmap="gray", origin="upper", normalize=False,
                                            "upper right" | "upper left"
     scalebar_length  : float or None     — explicit bar length in `unit`.
                                            If None, auto-sized to ~15 % of width.
+    scalebar_pad_size: float             — extra axes-fraction padding added above the
+                                           label, growing the scalebar background box
+                                           upward while its bottom edge stays fixed
+                                           (default: 0).
+    label_pad        : str or None       — text drawn in a black box anchored to the top
+                                           edge of the axes, styled like the scalebar box
+                                           (default: None, no label drawn).
+    label_pad_size   : float             — extra axes-fraction padding that grows the
+                                           label box downward while its top edge stays
+                                           fixed (default: 0).
     pixel_size       : float or None     — physical size of one pixel in metres.
                                            If None, read from TIFF metadata.
     rotation         : float             — clockwise rotation in degrees (default: 0).
@@ -372,7 +428,11 @@ def plot_sem(ax, path, cmap="gray", origin="upper", normalize=False,
         _draw_scalebar(ax, arr, px_size, unit,
                        scalebar_color, scalebar_fontsize, scalebar_loc,
                        scalebar_length, scalebar_fullwidth,
-                       img_width_px=view_w)
+                       img_width_px=view_w, pad_extra=scalebar_pad_size)
+
+    if label_pad is not None:
+        _draw_top_label(ax, label_pad, scalebar_color, scalebar_fontsize,
+                        pad_extra=label_pad_size)
 
     return im
 
@@ -398,6 +458,8 @@ def plot_growth(ax, steps, times, width_factors, temperatures,
                 colors=None, colors_text=None,
                 label_fontsize=14,
                 step_label_fontsize=None, ratio_fontsize=None,
+                times_labels=None, ratios_inside=False,
+                step_labels=None, step_label_colors=None, box_colors=None,
                 ylim_lower=None, ylim_upper=None):
     """
     Plot a growth sequence diagram on a matplotlib Axes object.
@@ -412,7 +474,23 @@ def plot_growth(ax, steps, times, width_factors, temperatures,
     temperatures  : array-like      — temperature at the end of each step (°C)
     ratios        : list or None    — V-III ratio label per step; use 0 / None entry to skip
                                       that step's label (default: no labels)
+    times_labels  : list of str or None — display string per non-ramp step, in order;
+                                      length must equal the number of non-ramp steps.
+                                      Overrides the "{time}min" labels derived from `times`
+                                      (default: None, use `times`).
+    ratios_inside : bool             — if True, draw V-III ratio labels inside the colored
+                                      step boxes instead of above them (default: False).
+    step_labels   : list of str or None — text drawn above each non-ramp step's colored
+                                      box, in order; length must equal the number of
+                                      non-ramp steps. Uses the same color as the material
+                                      labels (default: None, no labels drawn).
+    step_label_colors: dict or None — override step_labels text colours keyed by step
+                                      name, similar to `colors_text`; steps not listed
+                                      fall back to the material-label color (default: None).
     colors        : dict or None    — override fill colours keyed by step name
+    box_colors    : list of str or None — fill colour per step, in order, including ramps;
+                                      length must equal `len(steps)`. Overrides `colors`
+                                      and the step-type defaults (default: None).
     colors_text   : dict or None    — override text colours keyed by step name
     label_fontsize: int             — max fontsize for in-plot labels; auto-reduced to fit (default: 14)
     step_label_fontsize: int or None — fontsize for material-name and growth-time labels
@@ -480,25 +558,40 @@ def plot_growth(ax, steps, times, width_factors, temperatures,
              length_includes_head=True, color="black",
              head_width=hw_y, head_length=hl_y, zorder=10)
 
+    if box_colors is not None and len(box_colors) != nsteps:
+        raise ValueError(
+            f"box_colors has length {len(box_colors)}, expected {nsteps} (number of steps)."
+        )
+
     for i in range(nsteps):
         ax.fill_between(
             [cum_scaled_times[i], cum_scaled_times[i + 1]],
             [temperatures[i], temperatures[i + 1]],
             [y_lo + 1, y_lo + 1],
-            color=_colors.get(steps[i], "#cccccc"),
-            edgecolor="black",
+            color=box_colors[i] if box_colors is not None else _colors.get(steps[i], "#cccccc"),
         )
 
     ax.tick_params(which="major", right=False, direction="out", left=True, color="black")
     ax.tick_params(which="minor", right=False, direction="out", left=False)
 
     # Step labels (material name + time) — uniform fontsize, sized to the narrowest bar
+    non_ramp_idx = [i for i in range(nsteps) if steps[i] != "ramp"]
+    if times_labels is not None:
+        if len(times_labels) != len(non_ramp_idx):
+            raise ValueError(
+                f"times_labels has length {len(times_labels)}, "
+                f"expected {len(non_ramp_idx)} (number of non-ramp steps)."
+            )
+        time_strs = dict(zip(non_ramp_idx, times_labels))
+    else:
+        time_strs = {i: f"{int(times[i])}min" for i in non_ramp_idx}
+
     step_fs = label_fontsize
     for i in range(nsteps):
         if steps[i] != "ramp":
             x0 = cum_scaled_times[i]
             x1 = cum_scaled_times[i + 1]
-            time_str = f"{int(times[i])}min"
+            time_str = time_strs[i]
             step_fs = min(step_fs, _fit_fontsize(ax, x0, x1, [steps[i], time_str], max_fs=label_fontsize))
 
     fs = step_label_fontsize if step_label_fontsize is not None else step_fs
@@ -512,13 +605,32 @@ def plot_growth(ax, steps, times, width_factors, temperatures,
         if steps[i] != "ramp":
             x0 = cum_scaled_times[i]
             x1 = cum_scaled_times[i + 1]
-            time_str = f"{int(times[i])}min"
+            time_str = time_strs[i]
             tc = _colors_text.get(steps[i], "black")
             x_text = x0 + (x1 - x0) * 0.04
             ax.text(x_text, text_y_step, time_str,
                     color=tc, fontsize=fs, fontweight="bold")
             ax.text(x_text, text_y_name, steps[i],
                     color=tc, fontsize=fs, fontweight="bold")
+
+    # Custom step labels — above the colored boxes, same color as the material labels
+    if step_labels is not None:
+        if len(step_labels) != len(non_ramp_idx):
+            raise ValueError(
+                f"step_labels has length {len(step_labels)}, "
+                f"expected {len(non_ramp_idx)} (number of non-ramp steps)."
+            )
+        step_label_map = dict(zip(non_ramp_idx, step_labels))
+        _step_label_colors = step_label_colors or {}
+        step_label_y_offset = y_range * 0.05
+        for i in non_ramp_idx:
+            x0 = cum_scaled_times[i]
+            x1 = cum_scaled_times[i + 1]
+            bar_top = max(temperatures[i], temperatures[i + 1])
+            x_text = x0 + (x1 - x0) * 0.04
+            color = _step_label_colors.get(steps[i], _colors_text.get(steps[i], "black"))
+            ax.text(x_text, bar_top + step_label_y_offset, step_label_map[i],
+                    color=color, fontsize=fs, fontweight="bold")
 
     # V-III ratio labels — above the bars, autoscaled to the bar's width
     if ratios is not None:
@@ -530,15 +642,22 @@ def plot_growth(ax, steps, times, width_factors, temperatures,
                 label = f"$\\mathbf{{R_{{V/III}}}}$={r}"
                 bar_top = max(temperatures[i], temperatures[i + 1])
                 x_text = x0 + (x1 - x0) * 0.04
-                ax.text(x_text, bar_top + ratio_y_offset, label,
-                        color="black",
+                if ratios_inside:
+                    y_ratio, va = bar_top - ratio_y_offset, "top"
+                else:
+                    y_ratio, va = bar_top + ratio_y_offset, "baseline"
+                ax.text(x_text, y_ratio, label, va=va,
+                        color=_colors_text.get(steps[i], "black"),
                         fontsize=ratio_fontsize if ratio_fontsize is not None else step_fs,
                         fontweight="bold")
 
 
 def make_axes(fig, specs, low, top, heights, dys, lefts, rights,
               widths_list, ds_list, fixed_heights=None, fixed_list=None,
-              labels=False, label_fontsize=12, xlabels=None, ylabels=None):
+              labels=False, label_fontsize=12, xlabels=None, ylabels=None,
+              skip_labels=None,
+              twinx=None, twiny=None, twinx_names=None, twiny_names=None,
+              twinx_ylabels=None, twiny_xlabels=None):
     """
     Create all axes for a figure layout and return them as a dict.
 
@@ -563,6 +682,33 @@ def make_axes(fig, specs, low, top, heights, dys, lefts, rights,
                                                      top-to-bottom order; use None entries to skip
     ylabels        : list of str or None, optional — y-axis labels in left-to-right,
                                                      top-to-bottom order; use None entries to skip
+    skip_labels    : list of str or None — axes names to exclude from the a), b), c)...
+                                          panel labels; the letter sequence continues
+                                          uninterrupted for the remaining axes (default: None)
+    twinx          : list of lists of bool or None — same shape as `specs`; where True,
+                                          a twin x-axis (shared x, independent y) is
+                                          created via `.twinx()` for that subplot, keyed
+                                          in the returned dict under the matching entry
+                                          in `twinx_names` (default: None).
+    twiny          : list of lists of bool or None — same shape as `specs`; where True,
+                                          a twin y-axis (shared y, independent x) is
+                                          created via `.twiny()` for that subplot, keyed
+                                          in the returned dict under the matching entry
+                                          in `twiny_names` (default: None).
+    twinx_names    : list of lists of str or None — same shape as `specs`; name to key
+                                          the twin axes under wherever `twinx` is True.
+                                          Entries where `twinx` is False are ignored,
+                                          even if not None (default: None).
+    twiny_names    : list of lists of str or None — same shape as `specs`; name to key
+                                          the twin axes under wherever `twiny` is True.
+                                          Entries where `twiny` is False are ignored,
+                                          even if not None (default: None).
+    twinx_ylabels  : list of lists of str or None — same shape as `specs`; y-axis label
+                                          for the twin axes created via `twinx`. Ignored
+                                          wherever `twinx` is False (default: None).
+    twiny_xlabels  : list of lists of str or None — same shape as `specs`; x-axis label
+                                          for the twin axes created via `twiny`. Ignored
+                                          wherever `twiny` is False (default: None).
 
     Returns
     -------
@@ -570,6 +716,7 @@ def make_axes(fig, specs, low, top, heights, dys, lefts, rights,
     """
     if fixed_list is None:
         fixed_list = [None] * len(specs)
+    _skip_labels = set(skip_labels) if skip_labels is not None else set()
 
     y_positions, scaled_heights = rescale_heights(low, top, heights, dys, fixed_heights)
 
@@ -583,18 +730,28 @@ def make_axes(fig, specs, low, top, heights, dys, lefts, rights,
         for i, name in enumerate(row_specs):
             ax[name] = fig.add_axes(
                 [positions[i], y_positions[row_idx], scaled_widths[i], scaled_heights[row_idx]])
-            if labels:
+            if labels and name not in _skip_labels:
                 offset = mtransforms.ScaledTranslation(-4/72, 4/72, fig.dpi_scale_trans)
                 ax[name].text(0, 1, f"{chr(ord('a') + idx)})",
                               transform=ax[name].transAxes + offset,
                               ha="right", va="bottom",
                               fontsize=label_fontsize,
                               clip_on=False)
+                idx += 1
             if xlabels is not None and xlabels[row_idx][i] is not None:
                 ax[name].set_xlabel(xlabels[row_idx][i])
             if ylabels is not None and ylabels[row_idx][i] is not None:
                 ax[name].set_ylabel(ylabels[row_idx][i])
-            idx += 1
+            if twinx is not None and twinx[row_idx][i]:
+                twin_name = twinx_names[row_idx][i]
+                ax[twin_name] = ax[name].twinx()
+                if twinx_ylabels is not None and twinx_ylabels[row_idx][i] is not None:
+                    ax[twin_name].set_ylabel(twinx_ylabels[row_idx][i])
+            if twiny is not None and twiny[row_idx][i]:
+                twin_name = twiny_names[row_idx][i]
+                ax[twin_name] = ax[name].twiny()
+                if twiny_xlabels is not None and twiny_xlabels[row_idx][i] is not None:
+                    ax[twin_name].set_xlabel(twiny_xlabels[row_idx][i])
 
     return ax
 
